@@ -15,6 +15,12 @@ from models.networks.img.NFFB_2d import NFFB
 from apex.optimizers import FusedAdam
 from torch.optim.lr_scheduler import StepLR
 
+# metric
+from torchmetrics import (
+    PeakSignalNoiseRatio,
+    StructuralSimilarityIndexMeasure,
+    )
+from torchmetrics.functional import peak_signal_noise_ratio, structural_similarity_index_measure
 
 # pytorch-lightning
 from pytorch_lightning import LightningModule, Trainer
@@ -36,6 +42,10 @@ class ImageSystem(LightningModule):
     def __init__(self, hparams):
         super().__init__()
         self.save_hyperparameters(hparams)
+
+        self.metric_log_path = os.path.join("metrics.txt")
+        with open(self.metric_log_path, 'w') as f:
+            f.write("epoch\tpsnr\tssim\n")  # Header
 
         self.time = str(time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime()))
 
@@ -198,12 +208,34 @@ class ImageSystem(LightningModule):
         pred_img = process_batch_in_chunks(batch["points"], self.ema_model, max_chunk_size=2**18)
         pred_img = pred_img[:img_size, :].reshape(self.img_data.shape).float().clamp(0.0, 1.0)
 
-        pred_img = pred_img.cpu().numpy()
+        gt_img = self.img_data.float().clamp(0.0, 1.0).to(pred_img.device)
+
+        # tensor-based SSIM expects (N, C, H, W)
+        gt = gt_img.permute(2, 0, 1).unsqueeze(0)     # [1, C, H, W]
+        pred = pred_img.permute(2, 0, 1).unsqueeze(0) # [1, C, H, W]    
+
+        psnr = peak_signal_noise_ratio(gt, pred, data_range=1.0)
+        ssim = structural_similarity_index_measure(gt, pred, multichannel=True, data_range=1.0)
 
         if not self.hparams.no_save_test:
             img_path = f"{self.val_dir}/{self.current_epoch}.jpg"
             write_image(img_path, pred_img)
 
+        self.log("val/psnr", psnr, prog_bar=True)
+        self.log("val/ssim", ssim, prog_bar=True)
+
+        return {"psnr": psnr, "ssim": ssim}
+
+
+    def validation_epoch_end(self, outputs):
+        psnrs = [x['psnr'] for x in outputs]
+        ssims = [x['ssim'] for x in outputs]
+
+        avg_psnr = sum(psnrs) / len(psnrs)
+        avg_ssim = sum(ssims) / len(ssims)
+
+        with open(self.metric_log_path, 'a') as f:
+            f.write(f"{self.current_epoch}\t{avg_psnr:.4f}\t{avg_ssim:.4f}\n")
 
     def predict_step(self, batch, batch_idx):
         img_size = self.img_data.shape[0] * self.img_data.shape[1]
@@ -212,8 +244,34 @@ class ImageSystem(LightningModule):
         pred_img = pred_img[:img_size, :].reshape(self.img_data.shape).float().clamp(0.0, 1.0)
         pred_img = pred_img.cpu().numpy()
 
+        gt_img = self.img_data.float().clamp(0.0, 1.0).numpy()
+
+        psnr = peak_signal_noise_ratio(gt_img, pred_img, data_range=1.0)
+        ssim = structural_similarity_index_measure(gt_img, pred_img, multichannel=True, data_range=1.0)
+
+        print(f"[Prediction] PSNR: {psnr:.4f}, SSIM: {ssim:.4f}")
+
         img_path = f"{self.val_dir}/result.jpg"
         write_image(img_path, pred_img)
+
+        return {"psnr": psnr, "ssim": ssim}
+    
+    def output_metrics(self, logger):
+        preds = self.trainer.predict(self)
+        psnrs = [p["psnr"] for p in preds if isinstance(p, dict)]
+        ssims = [p["ssim"] for p in preds if isinstance(p, dict)]
+
+        avg_psnr = sum(psnrs) / len(psnrs)
+        avg_ssim = sum(ssims) / len(ssims)
+
+        logger.experiment.add_scalar("test/avg_psnr", avg_psnr, 0)
+        logger.experiment.add_scalar("test/avg_ssim", avg_ssim, 0)
+
+        with open(self.metric_log_path, 'a') as f:
+            f.write(f"final\t{avg_psnr:.4f}\t{avg_ssim:.4f}\n")
+
+        print(f"Average PSNR: {avg_psnr:.4f}, Average SSIM: {avg_ssim:.4f}")
+
 
 
     def get_progress_bar_dict(self):
@@ -221,7 +279,9 @@ class ImageSystem(LightningModule):
         items = super().get_progress_bar_dict()
         items.pop("v_num", None)
         return items
-
+    
+    def lr_scheduler_step(self, scheduler, metric, optimizer_idx=None):
+        scheduler.step(metric)
 
 if __name__ == '__main__':
     hparams = get_opts()
