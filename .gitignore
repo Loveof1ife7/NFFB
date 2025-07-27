@@ -1,0 +1,29 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+env/
+venv/
+*.env
+
+# Conda environments (optional: remove if using Docker)
+*.conda
+conda-meta/
+
+# VSCode settings
+.vscode/
+
+# macOS system files
+.DS_Store
+ 
+ experiment/
+ *.log
