@@ -20,7 +20,6 @@ from torchmetrics import (
     PeakSignalNoiseRatio,
     StructuralSimilarityIndexMeasure,
     )
-from torchmetrics.functional import peak_signal_noise_ratio, structural_similarity_index_measure
 
 # pytorch-lightning
 from pytorch_lightning import LightningModule, Trainer
@@ -62,8 +61,19 @@ class ImageSystem(LightningModule):
         with open(path, 'w') as f:
             json.dump(self.config, f, indent=4, separators=(", ", ": "), sort_keys=True)
 
+        ### Sava validation results
+        self.val_metric_log_path = os.path.join(exp_dir, "val_metrics.txt")
+        with open(self.metric_log_path, 'w') as f:
+            f.write("epoch\tpsnr\tssim\n")
+            
         self.img_data = torch.from_numpy(read_image(self.hparams.input_path)).float()
 
+        self.train_psnr = PeakSignalNoiseRatio(data_range=1.0)
+        self.train_ssim = StructuralSimilarityIndexMeasure(data_range=1.0)
+        
+        self.val_psnr = PeakSignalNoiseRatio(data_range=1.0)
+        self.val_ssim = StructuralSimilarityIndexMeasure(data_range=1.0)
+        
 
     def setup(self, stage):
         self.model = NFFB(self.config["network"], out_dims=self.img_data.shape[2])
@@ -214,8 +224,8 @@ class ImageSystem(LightningModule):
         gt = gt_img.permute(2, 0, 1).unsqueeze(0)     # [1, C, H, W]
         pred = pred_img.permute(2, 0, 1).unsqueeze(0) # [1, C, H, W]    
 
-        psnr = peak_signal_noise_ratio(gt, pred, data_range=1.0)
-        ssim = structural_similarity_index_measure(gt, pred, multichannel=True, data_range=1.0)
+        psnr = self.val_psnr(gt, pred)
+        ssim = self.val_ssim(gt, pred)
 
         if not self.hparams.no_save_test:
             img_path = f"{self.val_dir}/{self.current_epoch}.jpg"
@@ -233,6 +243,13 @@ class ImageSystem(LightningModule):
 
         avg_psnr = sum(psnrs) / len(psnrs)
         avg_ssim = sum(ssims) / len(ssims)
+        
+        with open(self.val_metric_log_path, 'a') as f:
+            f.write(f"{self.current_epoch}\t{avg_psnr:.4f}\t{avg_ssim:.4f}\n")
+
+        # 同时记录到 tensorboard
+        self.log("val/avg_psnr", avg_psnr)
+        self.log("val/avg_ssim", avg_ssim)
 
         with open(self.metric_log_path, 'a') as f:
             f.write(f"{self.current_epoch}\t{avg_psnr:.4f}\t{avg_ssim:.4f}\n")
@@ -246,15 +263,9 @@ class ImageSystem(LightningModule):
 
         gt_img = self.img_data.float().clamp(0.0, 1.0).numpy()
 
-        psnr = peak_signal_noise_ratio(gt_img, pred_img, data_range=1.0)
-        ssim = structural_similarity_index_measure(gt_img, pred_img, multichannel=True, data_range=1.0)
-
-        print(f"[Prediction] PSNR: {psnr:.4f}, SSIM: {ssim:.4f}")
-
         img_path = f"{self.val_dir}/result.jpg"
         write_image(img_path, pred_img)
 
-        return {"psnr": psnr, "ssim": ssim}
     
     def output_metrics(self, logger):
         preds = self.trainer.predict(self)
@@ -303,7 +314,7 @@ if __name__ == '__main__':
                                default_hp_metric=False)
 
     trainer = Trainer(max_epochs=hparams.num_epochs,
-                      check_val_every_n_epoch=5,
+                      check_val_every_n_epoch=1,
                       callbacks=callbacks,
                       logger=logger,
                       enable_model_summary=False,
