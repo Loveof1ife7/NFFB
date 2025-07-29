@@ -3,7 +3,7 @@
 """
 These codes are adapted from tiny-cuda-nn (https://github.com/NVlabs/tiny-cuda-nn)
 """
-
+import torch
 import imageio
 import numpy as np
 import os
@@ -55,6 +55,9 @@ def read_image(file):
     return img
 
 def write_image(file, img, quality=95):
+    if isinstance(img, torch.Tensor):
+        img = img.detach().cpu().numpy()
+        
     if os.path.splitext(file)[1] == ".bin":
         if img.shape[2] < 4:
             img = np.dstack((img, np.ones([img.shape[0], img.shape[1], 4 - img.shape[2]])))
