@@ -11,3 +11,4 @@ scipy
 pymcubes
 trimesh
 dearpygui
+torchmetrics==0.11.4
