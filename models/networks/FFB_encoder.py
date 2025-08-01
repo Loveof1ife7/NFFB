@@ -48,7 +48,7 @@ class FFB_encoder(nn.Module):
         for i in range(grid_level):
             ffn = torch.randn((feat_dim, sin_dims[2 + i]), requires_grad=True) * base_sigma * exp_sigma ** i
 
-            ffn_list.append(ffn)
+            ffn_list.append(ffn)    
 
         self.ffn = nn.Parameter(torch.stack(ffn_list, dim=0))
 
@@ -75,7 +75,6 @@ class FFB_encoder(nn.Module):
             self.out_activation = Sine(w0=self.sin_w0_high)
         else:
             self.out_dim = sin_dims[-1] * grid_level
-
 
     ### Initialize the parameters of SIREN branch
     def init_siren(self):
@@ -145,3 +144,60 @@ class FFB_encoder(nn.Module):
             x = feat_list
 
         return x
+
+class FrequencyModulatedHashEncoder(nn.Module):        
+    def __init__(self, encoding_config, network_config, n_input_dims, bound=1.0, has_out=True):
+        super().__init__()
+        
+        self.bound = bound
+        
+        self.feat_dim = encoding_config["feat_dim"]
+        self.grid_level = encoding_config["grid_level"]
+        per_level_scale = encoding_config["per_level_scale"]
+        
+        self.grid_encoder = tcnn.Encoding(
+            n_input_dims=n_input_dims,
+            encoding_config={
+                "otype": "HashGrid",
+                "n_levels": self.grid_level,
+                "n_features_per_level": self.feat_dim,
+                "log2_hashmap_size": 19,
+                "base_resolution": encoding_config["base_resolution"],
+                "per_level_scale": per_level_scale,
+            },
+        )
+        print(f"Grid encoder levels: {self.grid_level}")
+        print(f"Grid encoder feature dimension: {self.feat_dim}")
+        
+        base_sigma = encoding_config["base_sigma"]
+        exp_sigma = encoding_config["exp_sigma"]
+        
+        self.out_dim = network_config["dims"][-1]
+        self.ffn = self.init_frequency_aligned_weights(self.feat_dim, self.grid_level, self.out_dim, base_sigma, exp_sigma)
+        
+
+    def init_frequency_aligned_weights(self, feature_dim, grid_level, out_dim, base_sigma, exp_sigma):
+        # Initialize the frequency-aligned weights for the decoder
+        ffn_list = []
+
+        for i in range(grid_level):
+            ffn = torch.randn((feature_dim, out_dim), requires_grad=True) * base_sigma * exp_sigma ** i
+            ffn_list.append(ffn)
+        return nn.Parameter(torch.stack(ffn_list, dim=0))
+
+    def forward(self, x):
+        x = x / self.bound  # Normalize input to [-1, 1]
+        in_pos = (x + self.bound) / (2 * self.bound)
+        
+        grid_feature = self.grid_encoder(in_pos)
+        grid_feature = grid_feature.view(-1, self.grid_level, self.feat_dim)
+        grid_feature = grid_feature.permute(1, 0, 2)
+        
+        # grid_feature: [grid_level, N, feat_dim]
+        # ffn: [grid_level, feat_dim, 64]
+        # Apply frequency modulation to the grid features
+        fourier_feature = torch.einsum('lnf, lfd -> lnd', grid_feature, self.ffn)
+        fourier_feature = torch.sin(2 * math.pi * fourier_feature)
+        # fourier_feature = self.level_gates * fourier_feature  # [L, N, D]
+        return torch.sum(fourier_feature, dim=0)  # Sum across grid levels to get final feature representation
+    
