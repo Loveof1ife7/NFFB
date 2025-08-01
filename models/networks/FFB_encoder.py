@@ -5,6 +5,20 @@ import tinycudann as tcnn
 import math
 
 from models.networks.Sine import Sine, sine_init, first_layer_sine_init
+import math
+
+def positional_encoding(x, num_frequencies=10, include_input=True):
+    frequencies = 2.0 ** torch.arange(num_frequencies, dtype=x.dtype, device=x.device) * math.pi
+    x_expanded = x[..., None] * frequencies  # (N, D, F)
+    sin = torch.sin(x_expanded)
+    cos = torch.cos(x_expanded)
+    pe = torch.cat([sin, cos], dim=-1)  # (N, D, 2F)
+    pe = pe.view(x.shape[0], -1)  # Flatten
+
+    if include_input:
+        return torch.cat([x, pe], dim=-1)
+    else:
+        return pe
 
 
 class FFB_encoder(nn.Module):
@@ -153,7 +167,9 @@ class FrequencyModulatedHashEncoder(nn.Module):
         
         self.feat_dim = encoding_config["feat_dim"]
         self.grid_level = encoding_config["grid_level"]
+        self.num_pe = 10
         per_level_scale = encoding_config["per_level_scale"]
+        
         
         self.grid_encoder = tcnn.Encoding(
             n_input_dims=n_input_dims,

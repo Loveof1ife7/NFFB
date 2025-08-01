@@ -3,6 +3,21 @@ from torch import nn
 from models.networks.FFB_encoder import FrequencyModulatedHashEncoder
 from models.networks.Sine import Sine, sine_init, first_layer_sine_init
 
+import math
+
+def positional_encoding(x, num_frequencies=10, include_input=True):
+    frequencies = 2.0 ** torch.arange(num_frequencies, dtype=x.dtype, device=x.device) * math.pi
+    x_expanded = x[..., None] * frequencies  # (N, D, F)
+    sin = torch.sin(x_expanded)
+    cos = torch.cos(x_expanded)
+    pe = torch.cat([sin, cos], dim=-1)  # (N, D, 2F)
+    pe = pe.view(x.shape[0], -1)  # Flatten
+
+    if include_input:
+        return torch.cat([x, pe], dim=-1)
+    else:
+        return pe
+
 class FourierNGP(nn.Module):
     def __init__(self, config, out_dims=3):
         super().__init__()
@@ -18,11 +33,18 @@ class FourierNGP(nn.Module):
             has_out=False
         )
         print(f"Encoder output dim: {self.xyz_encoder.out_dim}")
-
+        
+        self.num_pe = config["encoding"]["num_pe"]
+        self.include_input = config["encoding"]["include_input"]
+        if self.include_input:
+            pe_dim = 2 * self.num_pe + 2  # 2 for x and y
+        else:
+            pe_dim = 2 * self.num_pe
+            
         # 构建backbone网络
         backbone_dims = config["Backbone"]["dims"]
         grid_feat_len = self.xyz_encoder.out_dim
-        backbone_dims = [grid_feat_len + 2] + backbone_dims + [out_dims]
+        backbone_dims = [grid_feat_len + pe_dim] + backbone_dims + [out_dims]
         self.num_backbone_layers = len(backbone_dims)
         
         print("\nBuilding backbone layers:")
@@ -39,6 +61,8 @@ class FourierNGP(nn.Module):
         # 初始化权重
         self.init_siren()
         print("="*50 + "\n")
+        
+        
 
     def init_siren(self):
         for layer in range(self.num_backbone_layers - 1):
@@ -58,6 +82,11 @@ class FourierNGP(nn.Module):
             out: (N, 1 or 3), the RGB values
         """
         x = (in_pos - 0.5) * 2.0
+        if self.num_pe > 0:
+            in_pos = positional_encoding(in_pos, num_frequencies=self.num_pe, include_input=self.include_input)
+        else:
+            in_pos = in_pos.view(in_pos.shape[0], -1)
+            
         grid_feature = self.xyz_encoder(x)
         grid_feature = torch.cat([grid_feature, in_pos], dim=-1)  # Concatenate input position
         

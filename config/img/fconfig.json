@@ -3,11 +3,13 @@
         "encoding": {
             "feat_dim": 2,
             "grid_level": 12,
-            "base_resolution": 96,
+            "base_resolution": 16,
             "per_level_scale": 1.5,
             "base_sigma": 5.0,
             "exp_sigma": 2.0,
-            "grid_embedding_std": 0.01
+            "grid_embedding_std": 0.01,
+            "num_pe": 10,
+            "include_input": true
         },
         "SIREN": {
             "dims": [
