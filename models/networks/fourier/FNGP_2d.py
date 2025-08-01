@@ -34,12 +34,12 @@ class FourierNGP(nn.Module):
         )
         print(f"Encoder output dim: {self.xyz_encoder.out_dim}")
         
-        self.num_pe = config["encoding"]["num_pe"]
+        self.num_freq = config["encoding"]["num_freq"]
         self.include_input = config["encoding"]["include_input"]
         if self.include_input:
-            pe_dim = 2 * self.num_pe + 2  # 2 for x and y
+            pe_dim = 2 *  (2 * self.num_freq + 1)
         else:
-            pe_dim = 2 * self.num_pe
+            pe_dim = 2 * 2* self.num_freq
             
         # 构建backbone网络
         backbone_dims = config["Backbone"]["dims"]
@@ -82,8 +82,8 @@ class FourierNGP(nn.Module):
             out: (N, 1 or 3), the RGB values
         """
         x = (in_pos - 0.5) * 2.0
-        if self.num_pe > 0:
-            in_pos = positional_encoding(in_pos, num_frequencies=self.num_pe, include_input=self.include_input)
+        if self.num_freq > 0:
+            in_pos = positional_encoding(in_pos, num_frequencies=self.num_freq, include_input=self.include_input)
         else:
             in_pos = in_pos.view(in_pos.shape[0], -1)
             

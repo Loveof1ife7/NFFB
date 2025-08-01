@@ -8,7 +8,7 @@
             "base_sigma": 5.0,
             "exp_sigma": 2.0,
             "grid_embedding_std": 0.01,
-            "num_pe": 10,
+            "num_freq": 10,
             "include_input": true
         },
         "SIREN": {
